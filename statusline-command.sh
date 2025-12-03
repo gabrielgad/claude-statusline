@@ -64,20 +64,13 @@ if [[ -n "$transcript" ]] && [[ -f "$transcript" ]]; then
     fi
 fi
 
-# Get ccusage data (time remaining, context %)
+# Get ccusage data (context %)
 ccusage_info=""
 ccusage_output=$(echo "$input" | npx --yes ccusage@latest statusline 2>/dev/null)
 
 if [[ -n "$ccusage_output" ]]; then
-    # Extract time left: "(Xh Xm left)"
-    time_left=$(echo "$ccusage_output" | grep -oP '\(\K[^)]+left' | head -1)
-
     # Extract context info: "🧠 XX,XXX (XX%)" - get the percentage
     context_pct=$(echo "$ccusage_output" | grep -oP '🧠\s+[\d,]+\s+\(\K\d+%' | head -1)
-
-    if [[ -n "$time_left" ]]; then
-        ccusage_info=" 󰔟 ${time_left}"
-    fi
 
     if [[ -n "$context_pct" ]]; then
         # Color context based on percentage
@@ -90,7 +83,7 @@ if [[ -n "$ccusage_output" ]]; then
             ctx_color=$'\033[31m'  # red
         fi
         reset=$'\033[0m'
-        ccusage_info="${ccusage_info} 🧠 ${ctx_color}${context_pct}${reset}"
+        ccusage_info=" 🧠 ${ctx_color}${context_pct}${reset}"
     fi
 fi
 
