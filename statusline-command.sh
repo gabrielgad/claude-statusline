@@ -64,17 +64,20 @@ if [[ -n "$transcript" ]] && [[ -f "$transcript" ]]; then
     fi
 fi
 
-# Get ccusage data (context %)
-ccusage_info=""
-ccusage_output=$(echo "$input" | npx --yes ccusage@latest statusline 2>/dev/null)
-
-if [[ -n "$ccusage_output" ]]; then
-    # Extract context info: "🧠 XX,XXX (XX%)" - get the percentage
-    context_pct=$(echo "$ccusage_output" | grep -oP '🧠\s+[\d,]+\s+\(\K\d+%' | head -1)
-
-    if [[ -n "$context_pct" ]]; then
-        # Color context based on percentage
-        pct_num=${context_pct%\%}
+# Calculate context % from last API call (input + cache_read = total context)
+context_info=""
+if [[ -n "$transcript" ]] && [[ -f "$transcript" ]]; then
+    # Get the last usage block - need both input_tokens and cache_read_input_tokens
+    # Cache reads still consume context window space, just cost less
+    last_input=$(grep -oP '"input_tokens":\K[0-9]+' "$transcript" 2>/dev/null | tail -1)
+    last_cache_read=$(grep -oP '"cache_read_input_tokens":\K[0-9]+' "$transcript" 2>/dev/null | tail -1)
+    last_input=${last_input:-0}
+    last_cache_read=${last_cache_read:-0}
+    context_tokens=$((last_input + last_cache_read))
+    if [[ "$context_tokens" -gt 0 ]]; then
+        # Claude context window is 200K tokens
+        context_max=200000
+        pct_num=$((context_tokens * 100 / context_max))
         if [[ $pct_num -lt 50 ]]; then
             ctx_color=$'\033[32m'  # green
         elif [[ $pct_num -lt 80 ]]; then
@@ -83,7 +86,7 @@ if [[ -n "$ccusage_output" ]]; then
             ctx_color=$'\033[31m'  # red
         fi
         reset=$'\033[0m'
-        ccusage_info=" 🧠 ${ctx_color}${context_pct}${reset}"
+        context_info=" 🧠 ${ctx_color}${pct_num}%${reset}"
     fi
 fi
 
@@ -151,6 +154,6 @@ if (( $(echo "$session_cost > 0" | bc -l) )); then
 fi
 
 # Output with colors
-# Blue for dir, default for git, cyan for tokens, yellow for cost, green for weekly, then ccusage info
+# Blue for dir, default for git, cyan for tokens, yellow for cost, green for weekly, context %
 printf "\033[34m%s\033[0m%s\033[36m%s\033[0m\033[33m%s\033[0m\033[32m%s\033[0m%s" \
-    "$dir_display" "$git_info" "$token_info" "$cost_info" "$weekly_info" "$ccusage_info"
+    "$dir_display" "$git_info" "$token_info" "$cost_info" "$weekly_info" "$context_info"
