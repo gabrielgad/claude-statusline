@@ -23,10 +23,24 @@ if git -c core.fileMode=false rev-parse --git-dir &>/dev/null; then
     branch=$(git -c core.fileMode=false branch --show-current 2>/dev/null | head -n1)
     if [ -n "$branch" ]; then
         git_info=" $branch"
+
+        # Check dirty status
         if git -c core.fileMode=false diff --quiet 2>/dev/null && git -c core.fileMode=false diff --cached --quiet 2>/dev/null; then
             git_info="$git_info 󰗡"
         else
             git_info="$git_info 󰷉"
+        fi
+
+        # Check ahead/behind remote
+        upstream=$(git -c core.fileMode=false rev-parse --abbrev-ref '@{upstream}' 2>/dev/null)
+        if [ -n "$upstream" ]; then
+            ahead=$(git -c core.fileMode=false rev-list --count '@{upstream}..HEAD' 2>/dev/null || echo 0)
+            behind=$(git -c core.fileMode=false rev-list --count 'HEAD..@{upstream}' 2>/dev/null || echo 0)
+            if [[ "$ahead" -gt 0 ]] || [[ "$behind" -gt 0 ]]; then
+                git_info="$git_info"
+                [[ "$ahead" -gt 0 ]] && git_info="$git_info ↑$ahead"
+                [[ "$behind" -gt 0 ]] && git_info="$git_info ↓$behind"
+            fi
         fi
     fi
 fi
@@ -47,6 +61,8 @@ format_num() {
 transcript=$(echo "$input" | jq -r '.transcript_path // ""')
 
 token_info=""
+model_info=""
+
 if [[ -n "$transcript" ]] && [[ -f "$transcript" ]]; then
     # Sum tokens from transcript - separate all types
     tokens_input=$(grep -oP '"input_tokens":\K[0-9]+' "$transcript" 2>/dev/null | awk '{s+=$1} END {print s+0}')
@@ -62,22 +78,33 @@ if [[ -n "$transcript" ]] && [[ -f "$transcript" ]]; then
         read_display=$(format_num $cache_read)
         token_info=" 󰾂 ${in_display}↑${out_display}↓ 󰆓 ${write_display}↑${read_display}↓"
     fi
+
+    # Get model from last assistant message
+    last_model=$(grep -oP '"model":"claude-\K[^"]+' "$transcript" 2>/dev/null | tail -1)
+    if [[ -n "$last_model" ]]; then
+        case "$last_model" in
+            opus*) model_info=" 󰧑 O" ;;
+            sonnet*) model_info=" 󰧑 S" ;;
+            haiku*) model_info=" 󰧑 H" ;;
+            *) model_info=" 󰧑 ?" ;;
+        esac
+    fi
 fi
 
-# Calculate context % from last API call (input + cache_read = total context)
+# Calculate context % from last API call
+# Total context = input_tokens + cache_read_input_tokens + cache_creation_input_tokens
 context_info=""
 if [[ -n "$transcript" ]] && [[ -f "$transcript" ]]; then
-    # Get the last usage block - need both input_tokens and cache_read_input_tokens
-    # Cache reads still consume context window space, just cost less
+    # Get last values - need all three components
     last_input=$(grep -oP '"input_tokens":\K[0-9]+' "$transcript" 2>/dev/null | tail -1)
     last_cache_read=$(grep -oP '"cache_read_input_tokens":\K[0-9]+' "$transcript" 2>/dev/null | tail -1)
-    last_input=${last_input:-0}
-    last_cache_read=${last_cache_read:-0}
-    context_tokens=$((last_input + last_cache_read))
+    last_cache_create=$(grep -oP '"cache_creation_input_tokens":\K[0-9]+' "$transcript" 2>/dev/null | tail -1)
+    context_tokens=$(( ${last_input:-0} + ${last_cache_read:-0} + ${last_cache_create:-0} ))
     if [[ "$context_tokens" -gt 0 ]]; then
         # Claude context window is 200K tokens
         context_max=200000
         pct_num=$((context_tokens * 100 / context_max))
+        ctx_display=$(format_num $context_tokens)
         if [[ $pct_num -lt 50 ]]; then
             ctx_color=$'\033[32m'  # green
         elif [[ $pct_num -lt 80 ]]; then
@@ -86,58 +113,25 @@ if [[ -n "$transcript" ]] && [[ -f "$transcript" ]]; then
             ctx_color=$'\033[31m'  # red
         fi
         reset=$'\033[0m'
-        context_info=" 🧠 ${ctx_color}${pct_num}%${reset}"
+        context_info=" 🧠 ${ctx_color}${ctx_display} ${pct_num}%${reset}"
     fi
 fi
 
-# Calculate billing week cost
-get_billing_week_start() {
-    local ref_epoch=1765234800  # Dec 8, 2025 23:00 UTC
-    local now_epoch=$(date +%s)
-    local week_seconds=$((7 * 24 * 60 * 60))
-    local diff=$((now_epoch - ref_epoch))
-    if [[ $diff -lt 0 ]]; then
-        local weeks_back=$(( (-diff + week_seconds - 1) / week_seconds ))
-        echo $((ref_epoch - (weeks_back * week_seconds)))
-    else
-        local weeks_since=$((diff / week_seconds))
-        echo $((ref_epoch + (weeks_since * week_seconds) - week_seconds))
-    fi
-}
-
-weekly_cost=0
-projects_dir="$HOME/.claude/projects"
-cache_file="/tmp/claude-weekly-cost-cache"
-cache_max_age=300
-
-if [[ -f "$cache_file" ]] && [[ $(($(date +%s) - $(stat -c %Y "$cache_file" 2>/dev/null || echo 0))) -lt $cache_max_age ]]; then
-    weekly_cost=$(cat "$cache_file")
+# Get API ping latency (cached for 60 seconds)
+ping_info=""
+ping_cache="/tmp/claude-api-ping"
+ping_max_age=60
+if [[ -f "$ping_cache" ]] && [[ $(($(date +%s) - $(stat -c %Y "$ping_cache" 2>/dev/null || echo 0))) -lt $ping_max_age ]]; then
+    ping_ms=$(cat "$ping_cache")
 else
-    if [[ -d "$projects_dir" ]]; then
-        billing_start=$(get_billing_week_start)
-        while IFS= read -r -d '' file; do
-            if [[ -f "$file" ]]; then
-                f_input=$(grep -oP '"input_tokens":\K[0-9]+' "$file" 2>/dev/null | awk '{s+=$1} END {print s+0}')
-                f_output=$(grep -oP '"output_tokens":\K[0-9]+' "$file" 2>/dev/null | awk '{s+=$1} END {print s+0}')
-                f_cache_create=$(grep -oP '"cache_creation_input_tokens":\K[0-9]+' "$file" 2>/dev/null | awk '{s+=$1} END {print s+0}')
-                f_cache_read=$(grep -oP '"cache_read_input_tokens":\K[0-9]+' "$file" 2>/dev/null | awk '{s+=$1} END {print s+0}')
-                file_cost=$(echo "scale=6; ($f_input * 0.000015) + ($f_output * 0.000075) + ($f_cache_create * 0.00001875) + ($f_cache_read * 0.000001875)" | bc)
-                weekly_cost=$(echo "scale=6; $weekly_cost + $file_cost" | bc)
-            fi
-        done < <(find "$projects_dir" -name "*.jsonl" -newermt "@$billing_start" -print0 2>/dev/null)
+    ping_time=$(curl -o /dev/null -s -w '%{time_connect}' https://api.anthropic.com --connect-timeout 2 2>/dev/null)
+    if [[ -n "$ping_time" ]]; then
+        ping_ms=$(echo "$ping_time * 1000" | bc 2>/dev/null | cut -d. -f1)
+        echo "$ping_ms" > "$ping_cache"
     fi
-    echo "$weekly_cost" > "$cache_file"
 fi
-
-weekly_info=""
-if (( $(echo "$weekly_cost > 0" | bc -l) )); then
-    if (( $(echo "$weekly_cost >= 1" | bc -l) )); then
-        weekly_display=$(printf "\$%.2f" "$weekly_cost")
-    else
-        weekly_cents=$(echo "$weekly_cost * 100" | bc)
-        weekly_display=$(printf "%.0f¢" "$weekly_cents")
-    fi
-    weekly_info=" 󰃭 ${weekly_display}/wk"
+if [[ -n "$ping_ms" ]] && [[ "$ping_ms" -gt 0 ]]; then
+    ping_info=" 󰛳 ${ping_ms}ms"
 fi
 
 # Get session cost from Claude Code
@@ -154,6 +148,6 @@ if (( $(echo "$session_cost > 0" | bc -l) )); then
 fi
 
 # Output with colors
-# Blue for dir, default for git, cyan for tokens, yellow for cost, green for weekly, context %
-printf "\033[34m%s\033[0m%s\033[36m%s\033[0m\033[33m%s\033[0m\033[32m%s\033[0m%s" \
-    "$dir_display" "$git_info" "$token_info" "$cost_info" "$weekly_info" "$context_info"
+# Blue for dir, default for git, magenta for model, cyan for tokens, yellow for cost, default for ping, context %
+printf "\033[34m%s\033[0m%s\033[35m%s\033[0m\033[36m%s\033[0m\033[33m%s\033[0m%s%s" \
+    "$dir_display" "$git_info" "$model_info" "$token_info" "$cost_info" "$ping_info" "$context_info"
