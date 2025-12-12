@@ -5,29 +5,43 @@ A customizable status line for Claude Code that displays:
 - **Directory** with git branch and status
 - **Token usage** (input/output + cache write/read)
 - **Session cost**
-- **Weekly billing cost** (aligned to Claude's billing week)
-- **Time until block reset** (via ccusage)
-- **Context usage %** (color-coded: green <50%, yellow <80%, red ≥80%)
+- **Context usage %** (color-coded)
+- **API latency** (cached)
+- **Model indicator**
 
 ## Preview
 
+### Linux (Bash)
 ```
-󰚡 ~  main 󰗡  󰾂 1K↑24K↓ 󰆓 175K↑5.6M↓  󰄬 75¢  󰃭 $688.22/wk  󰔟 1h 57m left 🧠 35%
+󰚡 ~  main 󰗡  󰾂 1K↑24K↓ 󰆓 175K↑5.6M↓  󰄬 75¢  🧠 35%
+```
+
+### Windows (Nushell)
+```
+📁 ~ | 🤖 O | 💰 $5.42 | 🧠 162K 81% | 📊 6↑1K↓ ⚡2K↑160K↓ | 🏓 76ms
 ```
 
 ## Requirements
 
+### Linux
 - `jq` - JSON processor
 - `bc` - Calculator
-- `npx` - For ccusage (time left + context %)
-- Nerd Font - For icons (optional, will show boxes without it)
+- `curl` - For API latency
+- Nerd Font - For icons (optional)
+
+### Windows
+- [Nushell](https://www.nushell.sh/) - Modern shell
+- `curl` - For API latency (included in Windows 10+)
 
 ## Installation
+
+### Linux
 
 1. Copy the script to your Claude config directory:
 
 ```bash
 cp statusline-command.sh ~/.claude/statusline-command.sh
+chmod +x ~/.claude/statusline-command.sh
 ```
 
 2. Add to your Claude Code settings (`~/.claude/settings.json`):
@@ -41,18 +55,32 @@ cp statusline-command.sh ~/.claude/statusline-command.sh
 }
 ```
 
-Or if you already have settings, just add the `statusLine` block.
+### Windows (Nushell)
+
+1. Copy the script to your Claude config directory:
+
+```powershell
+copy statusline-command.nu $env:USERPROFILE\.claude\statusline.nu
+```
+
+2. Add to your Claude Code settings (`~/.claude/settings.json`):
+
+```json
+{
+  "statusLine": {
+    "type": "command",
+    "command": "nu --stdin -c \"let input = $in; source C:/Users/YOUR_USERNAME/.claude/statusline.nu; $input | statusline\""
+  }
+}
+```
+
+Replace `YOUR_USERNAME` with your Windows username.
 
 3. Restart Claude Code
 
-## Configuration
+## Icons Reference
 
-### Billing Week
-
-The script calculates weekly cost based on Claude's billing cycle (resets Mondays at 3pm PT). The reference date is set to Dec 8, 2025. This should work for future weeks automatically.
-
-### Icons
-
+### Linux (Nerd Font)
 | Icon | Meaning |
 |------|---------|
 | 󰚡 | Home directory |
@@ -62,22 +90,37 @@ The script calculates weekly cost based on Claude's billing cycle (resets Monday
 | 󰾂 | Token usage |
 | 󰆓 | Cache usage |
 | 󰄬 | Session cost |
-| 󰃭 | Weekly cost |
-| 󰔟 | Time until reset |
+| 󰧑 | Model |
+| 󰛳 | API latency |
 | 🧠 | Context % |
 
-### Token Display
+### Windows (Emoji)
+| Icon | Meaning |
+|------|---------|
+| 📁 | Directory |
+| 🤖 | Model (O=Opus, S=Sonnet, H=Haiku) |
+| 💰 | Session cost |
+| 🧠 | Context (tokens + %) |
+| 📊 | Input↑ Output↓ tokens |
+| ⚡ | Cache create↑ read↓ |
+| 🏓 | API latency |
 
-- `󰾂 1K↑24K↓` = 1K input tokens, 24K output tokens
-- `󰆓 175K↑5.6M↓` = 175K cache write, 5.6M cache read
+## Token Display
 
-### Pricing
+- Input/Output: `6↑1K↓` = 6 input tokens, 1K output tokens
+- Cache: `2K↑160K↓` = 2K cache created, 160K cache read
 
-Uses Opus 4.5 pricing:
-- Input: $15/M tokens
-- Output: $75/M tokens
-- Cache write: $18.75/M tokens
-- Cache read: $1.875/M tokens
+## Context Calculation
+
+Context % is calculated as:
+```
+context = (input_tokens + cache_read_input_tokens + cache_creation_input_tokens) / 200000 * 100
+```
+
+Color thresholds:
+- 🟢 Green: < 50%
+- 🟡 Yellow: 50-80%
+- 🔴 Red: ≥ 80%
 
 ## License
 
