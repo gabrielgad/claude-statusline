@@ -24,11 +24,29 @@ if git -c core.fileMode=false rev-parse --git-dir &>/dev/null; then
     if [ -n "$branch" ]; then
         git_info=" $branch"
 
-        # Check dirty status
+        # Check dirty status and diff stats
         if git -c core.fileMode=false diff --quiet 2>/dev/null && git -c core.fileMode=false diff --cached --quiet 2>/dev/null; then
             git_info="$git_info 󰗡"
         else
             git_info="$git_info 󰷉"
+            # Get combined diff stats (unstaged + staged)
+            diff_stats=$(git -c core.fileMode=false diff --shortstat 2>/dev/null)
+            staged_stats=$(git -c core.fileMode=false diff --cached --shortstat 2>/dev/null)
+            # Parse files changed, insertions, deletions from both
+            files_w=$(echo "$diff_stats" | grep -oP '\d+(?= file)' || echo 0)
+            files_s=$(echo "$staged_stats" | grep -oP '\d+(?= file)' || echo 0)
+            adds_w=$(echo "$diff_stats" | grep -oP '\d+(?= insertion)' || echo 0)
+            adds_s=$(echo "$staged_stats" | grep -oP '\d+(?= insertion)' || echo 0)
+            dels_w=$(echo "$diff_stats" | grep -oP '\d+(?= deletion)' || echo 0)
+            dels_s=$(echo "$staged_stats" | grep -oP '\d+(?= deletion)' || echo 0)
+            total_files=$(( ${files_w:-0} + ${files_s:-0} ))
+            total_adds=$(( ${adds_w:-0} + ${adds_s:-0} ))
+            total_dels=$(( ${dels_w:-0} + ${dels_s:-0} ))
+            diff_display=""
+            [[ "$total_files" -gt 0 ]] && diff_display=" ${total_files}f"
+            [[ "$total_adds" -gt 0 ]] && diff_display="${diff_display} +${total_adds}"
+            [[ "$total_dels" -gt 0 ]] && diff_display="${diff_display} -${total_dels}"
+            git_info="$git_info${diff_display}"
         fi
 
         # Check ahead/behind remote
@@ -45,11 +63,12 @@ if git -c core.fileMode=false rev-parse --git-dir &>/dev/null; then
     fi
 fi
 
-# Format numbers with K/M suffix
+# Format numbers with K/M suffix (using bash arithmetic only)
 format_num() {
     local num=$1
     if [[ $num -ge 1000000 ]]; then
-        printf "%.1fM" "$(echo "scale=1; $num / 1000000" | bc)"
+        # Use awk for decimal division
+        printf "%.1fM" $(awk "BEGIN {printf \"%.1f\", $num / 1000000}")
     elif [[ $num -ge 1000 ]]; then
         echo "$((num / 1000))K"
     else
@@ -126,7 +145,8 @@ if [[ -f "$ping_cache" ]] && [[ $(($(date +%s) - $(stat -c %Y "$ping_cache" 2>/d
 else
     ping_time=$(curl -o /dev/null -s -w '%{time_connect}' https://api.anthropic.com --connect-timeout 2 2>/dev/null)
     if [[ -n "$ping_time" ]]; then
-        ping_ms=$(echo "$ping_time * 1000" | bc 2>/dev/null | cut -d. -f1)
+        # Use awk for floating point arithmetic
+        ping_ms=$(awk "BEGIN {printf \"%.0f\", $ping_time * 1000}")
         echo "$ping_ms" > "$ping_cache"
     fi
 fi
@@ -134,14 +154,14 @@ if [[ -n "$ping_ms" ]] && [[ "$ping_ms" -gt 0 ]]; then
     ping_info=" 󰛳 ${ping_ms}ms"
 fi
 
-# Get session cost from Claude Code
+# Get session cost from Claude Code (using awk for floating point comparison)
 session_cost=$(echo "$input" | jq -r '.cost.total_cost_usd // 0')
 cost_info=""
-if (( $(echo "$session_cost > 0" | bc -l) )); then
-    if (( $(echo "$session_cost >= 1" | bc -l) )); then
-        cost_display=$(printf "$%.2f" "$session_cost")
+if [[ -n "$session_cost" ]] && [[ "$session_cost" != "0" ]] && awk "BEGIN {exit !($session_cost > 0)}"; then
+    if awk "BEGIN {exit !($session_cost >= 1)}"; then
+        cost_display=$(printf "\$%.2f" "$session_cost")
     else
-        cents=$(echo "$session_cost * 100" | bc)
+        cents=$(awk "BEGIN {printf \"%.0f\", $session_cost * 100}")
         cost_display=$(printf "%.0f¢" "$cents")
     fi
     cost_info=" 󰄬 ${cost_display}"
