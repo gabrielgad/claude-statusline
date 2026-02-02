@@ -89,9 +89,7 @@ format_num() {
 
 # Context window calculation from Claude Code input JSON
 context_info=""
-ctx_input=$(echo "$input" | jq -r '.context_window.total_input_tokens // 0')
-ctx_output=$(echo "$input" | jq -r '.context_window.total_output_tokens // 0')
-context_tokens=$(( ${ctx_input:-0} + ${ctx_output:-0} ))
+context_tokens=$(echo "$input" | jq -r '.context_window.total_input_tokens // 0')
 if [[ "$context_tokens" -gt 0 ]]; then
     context_max=$(echo "$input" | jq -r '.context_window.context_window_size // 200000')
     pct_num=$((context_tokens * 100 / context_max))
