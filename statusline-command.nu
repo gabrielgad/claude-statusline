@@ -12,14 +12,14 @@ def statusline []: string -> string {
     # Git information
     let git_info = try {
         cd $cwd
-        let branch = (^git branch --show-current 2>| str trim)
+        let branch = try { ^git branch --show-current | str trim } catch { "" }
         if ($branch | is-empty) {
             ""
         } else {
-            let mut info = $" 🌿 ($branch)"
-
             # Check dirty status
-            let untracked_files = (^git ls-files --others --exclude-standard 2>| lines | where { |l| not ($l | is-empty) })
+            let untracked_files = try {
+                ^git ls-files --others --exclude-standard | lines | where { |l| not ($l | is-empty) }
+            } catch { [] }
             let untracked_count = $untracked_files | length
             let untracked_lines = if $untracked_count > 0 {
                 try {
@@ -28,18 +28,16 @@ def statusline []: string -> string {
             } else { 0 }
 
             let tracked_dirty = try {
-                let diff_exit = (^git diff --quiet 2>| complete).exit_code
-                let cached_exit = (^git diff --cached --quiet 2>| complete).exit_code
+                let diff_exit = (^git diff --quiet | complete).exit_code
+                let cached_exit = (^git diff --cached --quiet | complete).exit_code
                 $diff_exit != 0 or $cached_exit != 0
             } catch { false }
 
-            if (not $tracked_dirty) and ($untracked_count == 0) {
-                $info = $"($info) ✅"
+            let dirty_part = if (not $tracked_dirty) and ($untracked_count == 0) {
+                " ✅"
             } else {
-                $info = $"($info) ✏️"
-                # Get diff stats
-                let diff_stats = try { ^git diff --shortstat 2>| str trim } catch { "" }
-                let staged_stats = try { ^git diff --cached --shortstat 2>| str trim } catch { "" }
+                let diff_stats = try { ^git diff --shortstat | str trim } catch { "" }
+                let staged_stats = try { ^git diff --cached --shortstat | str trim } catch { "" }
 
                 let parse_stat = { |s, pat|
                     if ($s | is-empty) { 0 } else {
@@ -63,19 +61,25 @@ def statusline []: string -> string {
                     + (if $total_adds > 0 { $" +($total_adds)" } else { "" })
                     + (if $total_dels > 0 { $" -($total_dels)" } else { "" })
                 )
-                $info = $"($info)($diff_display)"
+                $" ✏️($diff_display)"
             }
 
             # Check ahead/behind remote
-            let upstream = try { ^git rev-parse --abbrev-ref '@{upstream}' 2>| str trim } catch { "" }
-            if (not ($upstream | is-empty)) {
-                let ahead = try { ^git rev-list --count '@{upstream}..HEAD' 2>| str trim | into int } catch { 0 }
-                let behind = try { ^git rev-list --count 'HEAD..@{upstream}' 2>| str trim | into int } catch { 0 }
-                if $ahead > 0 { $info = $"($info) ↑($ahead)" }
-                if $behind > 0 { $info = $"($info) ↓($behind)" }
-            }
+            let sync_part = try {
+                let upstream = try { ^git rev-parse --abbrev-ref '@{upstream}' | str trim } catch { "" }
+                if ($upstream | is-empty) {
+                    ""
+                } else {
+                    let ahead = try { ^git rev-list --count $"@{upstream}..HEAD" | str trim | into int } catch { 0 }
+                    let behind = try { ^git rev-list --count $"HEAD..@{upstream}" | str trim | into int } catch { 0 }
+                    (
+                        (if $ahead > 0 { $" ↑($ahead)" } else { "" })
+                        + (if $behind > 0 { $" ↓($behind)" } else { "" })
+                    )
+                }
+            } catch { "" }
 
-            $info
+            $" 🌿 ($branch)($dirty_part)($sync_part)"
         }
     } catch { "" }
 
