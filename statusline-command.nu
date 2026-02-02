@@ -83,35 +83,6 @@ def statusline []: string -> string {
         }
     } catch { "" }
 
-    # Get tokens from transcript
-    let transcript_path = $d.transcript_path? | default ""
-    let tokens = if ($transcript_path != "" and ($transcript_path | path exists)) {
-        try {
-            let lines = open $transcript_path | lines | reverse | first 100
-            let usage_line = $lines | where { |line|
-                let p = try { $line | from json } catch { {} }
-                (($p | get -o message.usage) != null) and (($p | get -o isSidechain | default false) == false)
-            } | first
-            let entry = $usage_line | from json
-            let u = $entry.message.usage
-            {
-                inp: ($u | get -o input_tokens | default 0),
-                out: ($u | get -o output_tokens | default 0),
-                cache_read: ($u | get -o cache_read_input_tokens | default 0),
-                cache_create: ($u | get -o cache_creation_input_tokens | default 0)
-            }
-        } catch { { inp: 0, out: 0, cache_read: 0, cache_create: 0 } }
-    } else { { inp: 0, out: 0, cache_read: 0, cache_create: 0 } }
-
-    let fmt = { |n| if $n >= 1000000 { $"(($n / 1000000) | math round --precision 1)M" } else if $n >= 1000 { $"($n / 1000 | math round)K" } else { $"($n)" } }
-
-    # Context calculation
-    let ctx_total = $tokens.inp + $tokens.cache_read + $tokens.cache_create
-    let ctx_size = $d.context_window?.context_window_size? | default 200000
-    let pct = (($ctx_total / $ctx_size) * 100) | math round
-    let pct_color = if $pct >= 80 { (ansi red) } else if $pct >= 50 { (ansi yellow) } else { (ansi green) }
-    let ctx_display = do $fmt $ctx_total
-
     # API Latency (cached for 60 seconds)
     let ping_cache = [$env.USERPROFILE, ".claude", "api-ping-cache"] | path join
     let ping_ms = try {
@@ -133,5 +104,5 @@ def statusline []: string -> string {
     let ping_str = if $ping_ms > 0 { $" | (ansi white)🏓 ($ping_ms)ms(ansi reset)" } else { "" }
 
     # Build output
-    $"(ansi cyan)📁 ($dir)(ansi reset)(ansi green)($git_info)(ansi reset) | ($pct_color)🧠 ($ctx_display) ($pct)%(ansi reset) | (ansi blue)📊 (do $fmt $tokens.inp)↑(do $fmt $tokens.out)↓(ansi reset)($ping_str)"
+    $"(ansi cyan)📁 ($dir)(ansi reset)(ansi green)($git_info)(ansi reset)($ping_str)"
 }
