@@ -83,40 +83,11 @@ def statusline []: string -> string {
         }
     } catch { "" }
 
-    # Cost with icon
-    let cost = $d.cost?.total_cost_usd? | default 0
-    let cost_str = if $cost < 0.01 { "<1¢" } else if $cost < 1 {
-        $"($cost * 100 | math round)¢"
-    } else {
-        $"$($cost | into string --decimals 2)"
-    }
-
-    # Get tokens from transcript
-    let transcript_path = $d.transcript_path? | default ""
-    let tokens = if ($transcript_path != "" and ($transcript_path | path exists)) {
-        try {
-            let lines = open $transcript_path | lines | reverse | first 100
-            let usage_line = $lines | where { |line|
-                let p = try { $line | from json } catch { {} }
-                (($p | get -o message.usage) != null) and (($p | get -o isSidechain | default false) == false)
-            } | first
-            let entry = $usage_line | from json
-            let u = $entry.message.usage
-            {
-                inp: ($u | get -o input_tokens | default 0),
-                out: ($u | get -o output_tokens | default 0),
-                cache_read: ($u | get -o cache_read_input_tokens | default 0),
-                cache_create: ($u | get -o cache_creation_input_tokens | default 0)
-            }
-        } catch { { inp: 0, out: 0, cache_read: 0, cache_create: 0 } }
-    } else { { inp: 0, out: 0, cache_read: 0, cache_create: 0 } }
-
+    # Context window calculation
     let fmt = { |n| if $n >= 1000000 { $"(($n / 1000000) | math round --precision 1)M" } else if $n >= 1000 { $"($n / 1000 | math round)K" } else { $"($n)" } }
-
-    # Context calculation
-    let ctx_total = $tokens.inp + $tokens.cache_read + $tokens.cache_create
+    let ctx_total = ($d.context_window?.total_input_tokens? | default 0) + ($d.context_window?.total_output_tokens? | default 0)
     let ctx_size = $d.context_window?.context_window_size? | default 200000
-    let pct = (($ctx_total / $ctx_size) * 100) | math round
+    let pct = if $ctx_size > 0 { (($ctx_total / $ctx_size) * 100) | math round } else { 0 }
     let pct_color = if $pct >= 80 { (ansi red) } else if $pct >= 50 { (ansi yellow) } else { (ansi green) }
     let ctx_display = do $fmt $ctx_total
 
@@ -141,5 +112,5 @@ def statusline []: string -> string {
     let ping_str = if $ping_ms > 0 { $" | (ansi white)🏓 ($ping_ms)ms(ansi reset)" } else { "" }
 
     # Build output
-    $"(ansi cyan)📁 ($dir)(ansi reset)(ansi green)($git_info)(ansi reset) | (ansi yellow)💰 ($cost_str)(ansi reset) | ($pct_color)🧠 ($ctx_display) ($pct)%(ansi reset) | (ansi blue)📊 (do $fmt $tokens.inp)↑(do $fmt $tokens.out)↓(ansi reset) (ansi cyan)⚡(do $fmt $tokens.cache_create)↑(do $fmt $tokens.cache_read)↓(ansi reset)($ping_str)"
+    $"(ansi cyan)📁 ($dir)(ansi reset)(ansi green)($git_info)(ansi reset) | ($pct_color)🧠 ($ctx_display) ($pct)%(ansi reset)($ping_str)"
 }

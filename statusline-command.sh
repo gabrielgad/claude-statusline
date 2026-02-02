@@ -75,7 +75,7 @@ if git -c core.fileMode=false rev-parse --git-dir &>/dev/null; then
     fi
 fi
 
-# Format numbers with K/M suffix (using bash arithmetic only)
+# Format numbers with K/M suffix
 format_num() {
     local num=$1
     if [[ $num -ge 1000000 ]]; then
@@ -87,52 +87,24 @@ format_num() {
     fi
 }
 
-# Extract token usage from transcript file
-transcript=$(echo "$input" | jq -r '.transcript_path // ""')
-
-token_info=""
-
-if [[ -n "$transcript" ]] && [[ -f "$transcript" ]]; then
-    # Sum tokens from transcript - separate all types
-    tokens_input=$(grep -oP '"input_tokens":\K[0-9]+' "$transcript" 2>/dev/null | awk '{s+=$1} END {print s+0}')
-    tokens_output=$(grep -oP '"output_tokens":\K[0-9]+' "$transcript" 2>/dev/null | awk '{s+=$1} END {print s+0}')
-    cache_write=$(grep -oP '"cache_creation_input_tokens":\K[0-9]+' "$transcript" 2>/dev/null | awk '{s+=$1} END {print s+0}')
-    cache_read=$(grep -oP '"cache_read_input_tokens":\K[0-9]+' "$transcript" 2>/dev/null | awk '{s+=$1} END {print s+0}')
-
-    # Build token display: 󰾂 in/out 󰆓 write/read
-    if [[ "$tokens_input" -gt 0 ]] || [[ "$tokens_output" -gt 0 ]] || [[ "$cache_write" -gt 0 ]] || [[ "$cache_read" -gt 0 ]]; then
-        in_display=$(format_num $tokens_input)
-        out_display=$(format_num $tokens_output)
-        write_display=$(format_num $cache_write)
-        read_display=$(format_num $cache_read)
-        token_info=" 󰾂 ${in_display}↑${out_display}↓ 󰆓 ${write_display}↑${read_display}↓"
-    fi
-fi
-
-# Calculate context % from last API call
-# Total context = input_tokens + cache_read_input_tokens + cache_creation_input_tokens
+# Context window calculation from Claude Code input JSON
 context_info=""
-if [[ -n "$transcript" ]] && [[ -f "$transcript" ]]; then
-    # Get last values - need all three components
-    last_input=$(grep -oP '"input_tokens":\K[0-9]+' "$transcript" 2>/dev/null | tail -1)
-    last_cache_read=$(grep -oP '"cache_read_input_tokens":\K[0-9]+' "$transcript" 2>/dev/null | tail -1)
-    last_cache_create=$(grep -oP '"cache_creation_input_tokens":\K[0-9]+' "$transcript" 2>/dev/null | tail -1)
-    context_tokens=$(( ${last_input:-0} + ${last_cache_read:-0} + ${last_cache_create:-0} ))
-    if [[ "$context_tokens" -gt 0 ]]; then
-        # Read context window size from input, fallback to 200K
-        context_max=$(echo "$input" | jq -r '.context_window.context_window_size // 200000')
-        pct_num=$((context_tokens * 100 / context_max))
-        ctx_display=$(format_num $context_tokens)
-        if [[ $pct_num -lt 50 ]]; then
-            ctx_color=$'\033[32m'  # green
-        elif [[ $pct_num -lt 80 ]]; then
-            ctx_color=$'\033[33m'  # yellow
-        else
-            ctx_color=$'\033[31m'  # red
-        fi
-        reset=$'\033[0m'
-        context_info=" 🧠 ${ctx_color}${ctx_display} ${pct_num}%${reset}"
+ctx_input=$(echo "$input" | jq -r '.context_window.total_input_tokens // 0')
+ctx_output=$(echo "$input" | jq -r '.context_window.total_output_tokens // 0')
+context_tokens=$(( ${ctx_input:-0} + ${ctx_output:-0} ))
+if [[ "$context_tokens" -gt 0 ]]; then
+    context_max=$(echo "$input" | jq -r '.context_window.context_window_size // 200000')
+    pct_num=$((context_tokens * 100 / context_max))
+    ctx_display=$(format_num $context_tokens)
+    if [[ $pct_num -lt 50 ]]; then
+        ctx_color=$'\033[32m'  # green
+    elif [[ $pct_num -lt 80 ]]; then
+        ctx_color=$'\033[33m'  # yellow
+    else
+        ctx_color=$'\033[31m'  # red
     fi
+    reset=$'\033[0m'
+    context_info=" 🧠 ${ctx_color}${ctx_display} ${pct_num}%${reset}"
 fi
 
 # Get API ping latency (cached for 60 seconds)
@@ -152,20 +124,7 @@ if [[ -n "$ping_ms" ]] && [[ "$ping_ms" -gt 0 ]]; then
     ping_info=" 󰛳 ${ping_ms}ms"
 fi
 
-# Get session cost from Claude Code
-session_cost=$(echo "$input" | jq -r '.cost.total_cost_usd // 0')
-cost_info=""
-if [[ -n "$session_cost" ]] && [[ "$session_cost" != "0" ]] && awk "BEGIN {exit !($session_cost > 0)}"; then
-    if awk "BEGIN {exit !($session_cost >= 1)}"; then
-        cost_display=$(printf "\$%.2f" "$session_cost")
-    else
-        cents=$(awk "BEGIN {printf \"%.0f\", $session_cost * 100}")
-        cost_display=$(printf "%.0f¢" "$cents")
-    fi
-    cost_info=" 󰄬 ${cost_display}"
-fi
-
 # Output with colors
-# Blue for dir, green for git, cyan for tokens, yellow for cost, default for ping, context %
-printf "\033[34m%s\033[0m\033[32m%s\033[0m\033[36m%s\033[0m\033[33m%s\033[0m%s%s" \
-    "$dir_display" "$git_info" "$token_info" "$cost_info" "$ping_info" "$context_info"
+# Blue for dir, green for git, default for ping, context %
+printf "\033[34m%s\033[0m\033[32m%s\033[0m%s%s" \
+    "$dir_display" "$git_info" "$context_info" "$ping_info"
