@@ -83,14 +83,6 @@ def statusline []: string -> string {
         }
     } catch { "" }
 
-    # Cost with icon
-    let cost = $d.cost?.total_cost_usd? | default 0
-    let cost_str = if $cost < 0.01 { "<1¢" } else if $cost < 1 {
-        $"($cost * 100 | math round)¢"
-    } else {
-        $"$($cost | into string --decimals 2)"
-    }
-
     # Get tokens from transcript
     let transcript_path = $d.transcript_path? | default ""
     let tokens = if ($transcript_path != "" and ($transcript_path | path exists)) {
@@ -141,5 +133,5 @@ def statusline []: string -> string {
     let ping_str = if $ping_ms > 0 { $" | (ansi white)🏓 ($ping_ms)ms(ansi reset)" } else { "" }
 
     # Build output
-    $"(ansi cyan)📁 ($dir)(ansi reset)(ansi green)($git_info)(ansi reset) | (ansi yellow)💰 ($cost_str)(ansi reset) | ($pct_color)🧠 ($ctx_display) ($pct)%(ansi reset) | (ansi blue)📊 (do $fmt $tokens.inp)↑(do $fmt $tokens.out)↓(ansi reset) (ansi cyan)⚡(do $fmt $tokens.cache_create)↑(do $fmt $tokens.cache_read)↓(ansi reset)($ping_str)"
+    $"(ansi cyan)📁 ($dir)(ansi reset)(ansi green)($git_info)(ansi reset) | ($pct_color)🧠 ($ctx_display) ($pct)%(ansi reset) | (ansi blue)📊 (do $fmt $tokens.inp)↑(do $fmt $tokens.out)↓(ansi reset) (ansi cyan)⚡(do $fmt $tokens.cache_create)↑(do $fmt $tokens.cache_read)↓(ansi reset)($ping_str)"
 }
