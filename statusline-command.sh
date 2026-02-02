@@ -22,7 +22,7 @@ git_info=""
 if git -c core.fileMode=false rev-parse --git-dir &>/dev/null; then
     branch=$(git -c core.fileMode=false branch --show-current 2>/dev/null | head -n1)
     if [ -n "$branch" ]; then
-        git_info=" $branch"
+        git_info="  $branch"
 
         # Check dirty status and diff stats
         # Count untracked files
@@ -79,7 +79,6 @@ fi
 format_num() {
     local num=$1
     if [[ $num -ge 1000000 ]]; then
-        # Use awk for decimal division
         printf "%.1fM" $(awk "BEGIN {printf \"%.1f\", $num / 1000000}")
     elif [[ $num -ge 1000 ]]; then
         echo "$((num / 1000))K"
@@ -92,7 +91,6 @@ format_num() {
 transcript=$(echo "$input" | jq -r '.transcript_path // ""')
 
 token_info=""
-model_info=""
 
 if [[ -n "$transcript" ]] && [[ -f "$transcript" ]]; then
     # Sum tokens from transcript - separate all types
@@ -109,17 +107,6 @@ if [[ -n "$transcript" ]] && [[ -f "$transcript" ]]; then
         read_display=$(format_num $cache_read)
         token_info=" 󰾂 ${in_display}↑${out_display}↓ 󰆓 ${write_display}↑${read_display}↓"
     fi
-
-    # Get model from last assistant message
-    last_model=$(grep -oP '"model":"claude-\K[^"]+' "$transcript" 2>/dev/null | tail -1)
-    if [[ -n "$last_model" ]]; then
-        case "$last_model" in
-            opus*) model_info=" 󰧑 O" ;;
-            sonnet*) model_info=" 󰧑 S" ;;
-            haiku*) model_info=" 󰧑 H" ;;
-            *) model_info=" 󰧑 ?" ;;
-        esac
-    fi
 fi
 
 # Calculate context % from last API call
@@ -132,8 +119,8 @@ if [[ -n "$transcript" ]] && [[ -f "$transcript" ]]; then
     last_cache_create=$(grep -oP '"cache_creation_input_tokens":\K[0-9]+' "$transcript" 2>/dev/null | tail -1)
     context_tokens=$(( ${last_input:-0} + ${last_cache_read:-0} + ${last_cache_create:-0} ))
     if [[ "$context_tokens" -gt 0 ]]; then
-        # Claude context window is 200K tokens
-        context_max=200000
+        # Read context window size from input, fallback to 200K
+        context_max=$(echo "$input" | jq -r '.context_window.context_window_size // 200000')
         pct_num=$((context_tokens * 100 / context_max))
         ctx_display=$(format_num $context_tokens)
         if [[ $pct_num -lt 50 ]]; then
@@ -157,7 +144,6 @@ if [[ -f "$ping_cache" ]] && [[ $(($(date +%s) - $(stat -c %Y "$ping_cache" 2>/d
 else
     ping_time=$(curl -o /dev/null -s -w '%{time_connect}' https://api.anthropic.com --connect-timeout 2 2>/dev/null)
     if [[ -n "$ping_time" ]]; then
-        # Use awk for floating point arithmetic
         ping_ms=$(awk "BEGIN {printf \"%.0f\", $ping_time * 1000}")
         echo "$ping_ms" > "$ping_cache"
     fi
@@ -166,7 +152,7 @@ if [[ -n "$ping_ms" ]] && [[ "$ping_ms" -gt 0 ]]; then
     ping_info=" 󰛳 ${ping_ms}ms"
 fi
 
-# Get session cost from Claude Code (using awk for floating point comparison)
+# Get session cost from Claude Code
 session_cost=$(echo "$input" | jq -r '.cost.total_cost_usd // 0')
 cost_info=""
 if [[ -n "$session_cost" ]] && [[ "$session_cost" != "0" ]] && awk "BEGIN {exit !($session_cost > 0)}"; then
@@ -180,6 +166,6 @@ if [[ -n "$session_cost" ]] && [[ "$session_cost" != "0" ]] && awk "BEGIN {exit 
 fi
 
 # Output with colors
-# Blue for dir, default for git, magenta for model, cyan for tokens, yellow for cost, default for ping, context %
-printf "\033[34m%s\033[0m%s\033[35m%s\033[0m\033[36m%s\033[0m\033[33m%s\033[0m%s%s" \
-    "$dir_display" "$git_info" "$model_info" "$token_info" "$cost_info" "$ping_info" "$context_info"
+# Blue for dir, green for git, cyan for tokens, yellow for cost, default for ping, context %
+printf "\033[34m%s\033[0m\033[32m%s\033[0m\033[36m%s\033[0m\033[33m%s\033[0m%s%s" \
+    "$dir_display" "$git_info" "$token_info" "$cost_info" "$ping_info" "$context_info"

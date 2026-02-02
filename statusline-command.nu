@@ -2,21 +2,91 @@
 
 def statusline []: string -> string {
     let d = $in | from json
-    
+
     # Directory with icon
     let cwd = $d.cwd
     let dir = if ($cwd | str starts-with $env.USERPROFILE) {
         $"~($cwd | str replace $env.USERPROFILE '')"
     } else { $cwd | path basename }
-    
+
+    # Git information
+    let git_info = try {
+        cd $cwd
+        let branch = (^git branch --show-current 2>| str trim)
+        if ($branch | is-empty) {
+            ""
+        } else {
+            let mut info = $" 🌿 ($branch)"
+
+            # Check dirty status
+            let untracked_files = (^git ls-files --others --exclude-standard 2>| lines | where { |l| not ($l | is-empty) })
+            let untracked_count = $untracked_files | length
+            let untracked_lines = if $untracked_count > 0 {
+                try {
+                    $untracked_files | each { |f| open $f | lines | length } | math sum
+                } catch { 0 }
+            } else { 0 }
+
+            let tracked_dirty = try {
+                let diff_exit = (^git diff --quiet 2>| complete).exit_code
+                let cached_exit = (^git diff --cached --quiet 2>| complete).exit_code
+                $diff_exit != 0 or $cached_exit != 0
+            } catch { false }
+
+            if (not $tracked_dirty) and ($untracked_count == 0) {
+                $info = $"($info) ✅"
+            } else {
+                $info = $"($info) ✏️"
+                # Get diff stats
+                let diff_stats = try { ^git diff --shortstat 2>| str trim } catch { "" }
+                let staged_stats = try { ^git diff --cached --shortstat 2>| str trim } catch { "" }
+
+                let parse_stat = { |s, pat|
+                    if ($s | is-empty) { 0 } else {
+                        try { $s | parse --regex $pat | get 0.val | into int } catch { 0 }
+                    }
+                }
+
+                let files_w = do $parse_stat $diff_stats '(?P<val>\d+) file'
+                let files_s = do $parse_stat $staged_stats '(?P<val>\d+) file'
+                let adds_w = do $parse_stat $diff_stats '(?P<val>\d+) insertion'
+                let adds_s = do $parse_stat $staged_stats '(?P<val>\d+) insertion'
+                let dels_w = do $parse_stat $diff_stats '(?P<val>\d+) deletion'
+                let dels_s = do $parse_stat $staged_stats '(?P<val>\d+) deletion'
+
+                let total_files = $files_w + $files_s + $untracked_count
+                let total_adds = $adds_w + $adds_s + $untracked_lines
+                let total_dels = $dels_w + $dels_s
+
+                let diff_display = (
+                    (if $total_files > 0 { $" ($total_files)f" } else { "" })
+                    + (if $total_adds > 0 { $" +($total_adds)" } else { "" })
+                    + (if $total_dels > 0 { $" -($total_dels)" } else { "" })
+                )
+                $info = $"($info)($diff_display)"
+            }
+
+            # Check ahead/behind remote
+            let upstream = try { ^git rev-parse --abbrev-ref '@{upstream}' 2>| str trim } catch { "" }
+            if (not ($upstream | is-empty)) {
+                let ahead = try { ^git rev-list --count '@{upstream}..HEAD' 2>| str trim | into int } catch { 0 }
+                let behind = try { ^git rev-list --count 'HEAD..@{upstream}' 2>| str trim | into int } catch { 0 }
+                if $ahead > 0 { $info = $"($info) ↑($ahead)" }
+                if $behind > 0 { $info = $"($info) ↓($behind)" }
+            }
+
+            $info
+        }
+    } catch { "" }
+
     # Cost with icon
     let cost = $d.cost?.total_cost_usd? | default 0
-    let cost_str = if $cost < 0.01 { "<1¢" } else if $cost < 1 { 
-        $"($cost * 100 | math round)¢" 
-    } else { 
-        $"$($cost | into string --decimals 2)" 
+    let cost_str = if $cost < 0.01 { "<1¢" } else if $cost < 1 {
+        $"($cost * 100 | math round)¢"
+    } else {
+        $"$($cost | into string --decimals 2)"
     }
-    
+
     # Get tokens from transcript
     let transcript_path = $d.transcript_path? | default ""
     let tokens = if ($transcript_path != "" and ($transcript_path | path exists)) {
@@ -36,20 +106,16 @@ def statusline []: string -> string {
             }
         } catch { { inp: 0, out: 0, cache_read: 0, cache_create: 0 } }
     } else { { inp: 0, out: 0, cache_read: 0, cache_create: 0 } }
-    
+
     let fmt = { |n| if $n >= 1000000 { $"(($n / 1000000) | math round --precision 1)M" } else if $n >= 1000 { $"($n / 1000 | math round)K" } else { $"($n)" } }
-    
+
     # Context calculation
     let ctx_total = $tokens.inp + $tokens.cache_read + $tokens.cache_create
     let ctx_size = $d.context_window?.context_window_size? | default 200000
     let pct = (($ctx_total / $ctx_size) * 100) | math round
     let pct_color = if $pct >= 80 { (ansi red) } else if $pct >= 50 { (ansi yellow) } else { (ansi green) }
     let ctx_display = do $fmt $ctx_total
-    
-    # Model short name
-    let model = $d.model.display_name
-    let model_short = if ($model | str contains "Opus") { "O" } else if ($model | str contains "Sonnet") { "S" } else if ($model | str contains "Haiku") { "H" } else { "?" }
-    
+
     # API Latency (cached for 60 seconds)
     let ping_cache = [$env.USERPROFILE, ".claude", "api-ping-cache"] | path join
     let ping_ms = try {
@@ -58,7 +124,7 @@ def statusline []: string -> string {
             let age = ((date now) - $modified) | into int | $in / 1_000_000_000
             $age < 60
         } else { false }
-        
+
         if $use_cache {
             open $ping_cache | str trim | into float | math round
         } else {
@@ -69,7 +135,7 @@ def statusline []: string -> string {
         }
     } catch { 0 }
     let ping_str = if $ping_ms > 0 { $" | (ansi white)🏓 ($ping_ms)ms(ansi reset)" } else { "" }
-    
+
     # Build output
-    $"(ansi cyan)📁 ($dir)(ansi reset) | (ansi magenta)🤖 ($model_short)(ansi reset) | (ansi yellow)💰 ($cost_str)(ansi reset) | ($pct_color)🧠 ($ctx_display) ($pct)%(ansi reset) | (ansi blue)📊 (do $fmt $tokens.inp)↑(do $fmt $tokens.out)↓(ansi reset) (ansi cyan)⚡(do $fmt $tokens.cache_create)↑(do $fmt $tokens.cache_read)↓(ansi reset)($ping_str)"
+    $"(ansi cyan)📁 ($dir)(ansi reset)(ansi green)($git_info)(ansi reset) | (ansi yellow)💰 ($cost_str)(ansi reset) | ($pct_color)🧠 ($ctx_display) ($pct)%(ansi reset) | (ansi blue)📊 (do $fmt $tokens.inp)↑(do $fmt $tokens.out)↓(ansi reset) (ansi cyan)⚡(do $fmt $tokens.cache_create)↑(do $fmt $tokens.cache_read)↓(ansi reset)($ping_str)"
 }
