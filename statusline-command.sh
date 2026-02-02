@@ -87,9 +87,16 @@ format_num() {
     fi
 }
 
-# Context window calculation from Claude Code input JSON
+# Context window calculation from transcript (last API call usage)
 context_info=""
-context_tokens=$(echo "$input" | jq -r '.context_window.total_input_tokens // 0')
+transcript=$(echo "$input" | jq -r '.transcript_path // ""')
+context_tokens=0
+if [[ -n "$transcript" ]] && [[ -f "$transcript" ]]; then
+    last_input=$(grep -oP '"input_tokens":\K[0-9]+' "$transcript" 2>/dev/null | tail -1)
+    last_cache_read=$(grep -oP '"cache_read_input_tokens":\K[0-9]+' "$transcript" 2>/dev/null | tail -1)
+    last_cache_create=$(grep -oP '"cache_creation_input_tokens":\K[0-9]+' "$transcript" 2>/dev/null | tail -1)
+    context_tokens=$(( ${last_input:-0} + ${last_cache_read:-0} + ${last_cache_create:-0} ))
+fi
 if [[ "$context_tokens" -gt 0 ]]; then
     context_max=$(echo "$input" | jq -r '.context_window.context_window_size // 200000')
     pct_num=$((context_tokens * 100 / context_max))

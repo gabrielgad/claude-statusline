@@ -83,9 +83,21 @@ def statusline []: string -> string {
         }
     } catch { "" }
 
-    # Context window calculation
+    # Context window calculation from transcript (last API call usage)
     let fmt = { |n| if $n >= 1000000 { $"(($n / 1000000) | math round --precision 1)M" } else if $n >= 1000 { $"($n / 1000 | math round)K" } else { $"($n)" } }
-    let ctx_total = $d.context_window?.total_input_tokens? | default 0
+    let transcript_path = $d.transcript_path? | default ""
+    let ctx_total = if ($transcript_path != "" and ($transcript_path | path exists)) {
+        try {
+            let lines = open $transcript_path | lines | reverse | first 100
+            let usage_line = $lines | where { |line|
+                let p = try { $line | from json } catch { {} }
+                (($p | get -o message.usage) != null) and (($p | get -o isSidechain | default false) == false)
+            } | first
+            let entry = $usage_line | from json
+            let u = $entry.message.usage
+            ($u | get -o input_tokens | default 0) + ($u | get -o cache_read_input_tokens | default 0) + ($u | get -o cache_creation_input_tokens | default 0)
+        } catch { 0 }
+    } else { 0 }
     let ctx_size = $d.context_window?.context_window_size? | default 200000
     let pct = if $ctx_size > 0 { (($ctx_total / $ctx_size) * 100) | math round } else { 0 }
     let pct_color = if $pct >= 80 { (ansi red) } else if $pct >= 50 { (ansi yellow) } else { (ansi green) }
