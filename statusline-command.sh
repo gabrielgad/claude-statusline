@@ -25,12 +25,7 @@ if git -c core.fileMode=false rev-parse --git-dir &>/dev/null; then
         git_info="  $branch"
 
         # Check dirty status and diff stats
-        # Count untracked files
         untracked_count=$(git ls-files --others --exclude-standard 2>/dev/null | wc -l)
-        untracked_lines=0
-        if [[ "$untracked_count" -gt 0 ]]; then
-            untracked_lines=$(git ls-files --others --exclude-standard 2>/dev/null | xargs wc -l 2>/dev/null | tail -1 | awk '{print $1}')
-        fi
 
         has_tracked_changes=false
         if ! git -c core.fileMode=false diff --quiet 2>/dev/null || ! git -c core.fileMode=false diff --cached --quiet 2>/dev/null; then
@@ -41,7 +36,7 @@ if git -c core.fileMode=false rev-parse --git-dir &>/dev/null; then
             git_info="$git_info 󰗡"
         else
             git_info="$git_info 󰷉"
-            # Get combined diff stats (unstaged + staged) for tracked files
+            # Get combined diff stats (unstaged + staged) for tracked files only
             diff_stats=$(git -c core.fileMode=false diff --shortstat 2>/dev/null)
             staged_stats=$(git -c core.fileMode=false diff --cached --shortstat 2>/dev/null)
             # Parse files changed, insertions, deletions from both
@@ -51,13 +46,14 @@ if git -c core.fileMode=false rev-parse --git-dir &>/dev/null; then
             adds_s=$(echo "$staged_stats" | grep -oP '\d+(?= insertion)' || echo 0)
             dels_w=$(echo "$diff_stats" | grep -oP '\d+(?= deletion)' || echo 0)
             dels_s=$(echo "$staged_stats" | grep -oP '\d+(?= deletion)' || echo 0)
-            total_files=$(( ${files_w:-0} + ${files_s:-0} + ${untracked_count:-0} ))
-            total_adds=$(( ${adds_w:-0} + ${adds_s:-0} + ${untracked_lines:-0} ))
+            total_files=$(( ${files_w:-0} + ${files_s:-0} ))
+            total_adds=$(( ${adds_w:-0} + ${adds_s:-0} ))
             total_dels=$(( ${dels_w:-0} + ${dels_s:-0} ))
             diff_display=""
             [[ "$total_files" -gt 0 ]] && diff_display=" ${total_files}f"
             [[ "$total_adds" -gt 0 ]] && diff_display="${diff_display} +${total_adds}"
             [[ "$total_dels" -gt 0 ]] && diff_display="${diff_display} -${total_dels}"
+            [[ "$untracked_count" -gt 0 ]] && diff_display="${diff_display} ?${untracked_count}"
             git_info="$git_info${diff_display}"
         fi
 
